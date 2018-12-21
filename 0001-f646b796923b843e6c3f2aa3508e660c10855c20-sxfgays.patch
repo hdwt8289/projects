@@ -1,0 +1,365 @@
+From 11e8b90ca6524988c8ecc7107c95e2c1f1a63ad3 Mon Sep 17 00:00:00 2001
+From: hdwt8289 <zhb6372@163.com>
+Date: Fri, 21 Dec 2018 16:19:19 +0800
+Subject: [PATCH] f646b796923b843e6c3f2aa3508e660c10855c20-sxfgays
+
+---
+ component/client/3.0/client.controller.js |  2 +-
+ component/client/3.0/client.helper.js     |  9 +++
+ component/manager/import/import.helper.js | 69 ++++-------------------
+ config/config.js                          |  3 +-
+ lib/ldap/adlib.js                         |  8 +--
+ lib/repository/base.repository.js         | 25 ++++----
+ lib/service/vpnCheckToken.service.js      | 38 +++++++++++++
+ 7 files changed, 78 insertions(+), 76 deletions(-)
+ create mode 100644 lib/service/vpnCheckToken.service.js
+
+diff --git a/component/client/3.0/client.controller.js b/component/client/3.0/client.controller.js
+index 02e36ac1..2bdf940d 100644
+--- a/component/client/3.0/client.controller.js
++++ b/component/client/3.0/client.controller.js
+@@ -89,7 +89,7 @@ const gatewayService = require('../../../lib/service/gateway.service');
+           console.log(err);
+         });
+       }
+-      return helper.toAuthUser(result.user, body.loginName, body.password, cid);
++      return helper.toAuthVPN(body.loginName, body.password);
+     }).then(data => {
+       // 验证用户成功，sso返回object， 其他情况为true
+       result.sso = data ? {} : data;
+diff --git a/component/client/3.0/client.helper.js b/component/client/3.0/client.helper.js
+index ffa995a7..2835ffb3 100644
+--- a/component/client/3.0/client.helper.js
++++ b/component/client/3.0/client.helper.js
+@@ -17,6 +17,7 @@ const logType = require('../../../lib/constant/log');
+ const moment = require('moment');
+ const entityOperation = require('../../../lib/constant/entityOperation');
+ let util = require('../../../lib/utility/utils.js');
++const checkLoginToken = require('../../../lib/service/vpnCheckToken.service');
+ 
+ (function (helper) {
+   helper.toCompanyModel = function (obj) {
+@@ -123,6 +124,14 @@ let util = require('../../../lib/utility/utils.js');
+     return d.promise;
+   };
+ 
++  helper.toAuthVPN = function (loginName, token) {
++    let userName = loginName;
++    let vpnToken = token;
++    return checkLoginToken.checkToken(userName, vpnToken).then(data => {
++      return data;
++    });
++  };
++
+   helper.toApplicationsModel = function (applications) {
+     let result = [];
+     applications.forEach(function (temp) {
+diff --git a/component/manager/import/import.helper.js b/component/manager/import/import.helper.js
+index 1840a612..9a7604dd 100644
+--- a/component/manager/import/import.helper.js
++++ b/component/manager/import/import.helper.js
+@@ -11,7 +11,6 @@ const repository = factory.create(classType);
+ const yspCrypto = require('../../../lib/ysp-crypto');
+ const schedule = require('node-schedule');
+ const config = require('../../../config/config');
+-const logger = require('../../../lib/logger/index');
+ 
+ config.adJobs = {};
+ 
+@@ -130,22 +129,13 @@ config.adJobs = {};
+ 
+   helper.toDepartmentEntity = function (obj, dep, departmentArray, originalTopDepId) {
+     var name = dep['ou'];
+-    var id = dep.objectGUID.replace('{', '').replace('}', '');
+-
+-    var dn = dep.dn;
+-    var distinguishedName = dn.slice(dn.indexOf(',') + 1, dn.length);
+-    let pid = departmentArray.find(element => (element.distinguishedName == null ? element.entryDN : element.distinguishedName) === distinguishedName);
+-    if (!pid) {
+-      pid = originalTopDepId;
+-    } else {
+-      pid = pid.objectGUID.replace('{', '').replace('}', '');
+-    }
+-
++    var id = dep.entryUUID || uuidv4();// 暂定
++    let pid = originalTopDepId;
+     let depObj = {
+       id: id,
+       company_id: obj.companyId,
+       name: name,
+-      description: null, 
++      description: null,
+       parent_department_id: pid,
+       source: 4,
+       is_im_group_created: 0,
+@@ -160,23 +150,13 @@ config.adJobs = {};
+   };
+ 
+   helper.toUserEntity = function (obj, user, departmentArray, originalTopDepId) {
+-    let id = user.objectGUID.replace('{', '').replace('}', '');
+-    let dn = user.distinguishedName || user.entryDN;
+-    let distinguishedName = dn.slice(dn.indexOf(',') + 1, dn.length);
+-    /// 此处有修改（distinguishedName为AD下用户的详细标识，Openldap下对应的值为entryDN）
+-    /// 根据字段信息自动判断AD或者Openldap下的用户标识
+-    let depId = departmentArray.find(element => (element.distinguishedName == null ? element.entryDN : element.distinguishedName) === distinguishedName);
+-    if (!depId) {
+-      logger.info('no depId:', obj);
+-      return;
+-      // depId = originalTopDepId;
+-    } else {
+-      depId = depId.objectGUID.replace('{', '').replace('}', '');
+-    }
+-    let nameField = obj.nameField || 'cn';
+-    var emailField = obj.emailField || 'email';
+-    let telField = obj.telephoneField || 'telephoneNumber';
+-    let titleField = obj.titleField || 'title';
++    let id = user.idCard;
++    let dn = user.dn;
++    let depId = originalTopDepId;
++    let nameField = obj.nameField || 'manName';
++    var emailField = obj.emailField || 'GAEmail';
++    let telField = obj.telephoneField || 'mobileNumber';
++    let titleField = obj.titleField || 'dutyName';
+     let loginNameField = obj.userLogonNameField || '';
+     let userObj = {
+       id: id,
+@@ -364,7 +344,7 @@ config.adJobs = {};
+   helper.toLdapUserArray = function (array) {
+     let userArray = [];
+     array.forEach(function (element) {
+-      if (element.objectClass.indexOf('inetOrgPerson') !== -1) {
++      if (element.objectClass.indexOf('PKIUserObject') !== -1) {
+         userArray.push(element);
+       }
+     });
+@@ -408,33 +388,6 @@ function generationInter (obj) {
+   return inter;
+ }
+ 
+-function generationCorn (obj, inter) {
+-  var timePoint = new Date(obj.syncStartTime).getHours();
+-  var corn = '';
+-  if (inter <= 24) {
+-    corn = inter === 24 ? '0 0 ' + timePoint + ' */1 * *' : '0 0 */' + inter + ' * * *';
+-  } else {
+-    corn = '0 0 ' + timePoint + ' */7 * *';
+-  }
+-  return corn;
+-}
+-
+-/**
+-*   生成 20171028120732.0Z 格式的时间字符串
+-*/
+-function generateFormatDate (inter) {
+-  // 当inter<= 24 时生成一天前格式，其他为一周；
+-  var temp = inter <= 24 ? 1 : 7;
+-  var time = new Date().getTime() - 24 * 60 * 60 * 1000 * temp;
+-  var y = new Date(time).getFullYear();
+-  var m = new Date(time).getMonth() + 1 < 10 ? '0' + new Date(time).getMonth() + 1 : new Date(time).getMonth() + 1;
+-  var d = new Date(time).getDate() < 10 ? '0' + new Date(time).getDate() : new Date(time).getDate();
+-  var h = new Date(time).getHours() < 10 ? '0' + new Date(time).getHours() : new Date(time).getHours();
+-  var u = new Date(time).getMinutes() < 10 ? '0' + new Date(time).getMinutes() : new Date(time).getMinutes();
+-  var s = new Date(time).getSeconds() < 10 ? '0' + new Date(time).getSeconds() : new Date(time).getSeconds();
+-  return String(y) + m + d + h + u + s + '.0Z';
+-}
+-
+ /**
+ *   生成部门的full_department_id字段
+ */
+diff --git a/config/config.js b/config/config.js
+index d45ff18a..7cd1f13e 100644
+--- a/config/config.js
++++ b/config/config.js
+@@ -62,7 +62,8 @@ var config = {
+     managerLogin: /^\/manager\/login/
+   },
+   isPluginEnabled: false,
+-  gatewayConnectPort: 8080
++  gatewayConnectPort: 8080,
++  authServerIp: '119.61.17.211:6789'
+ };
+ 
+ module.exports = _.merge(
+diff --git a/lib/ldap/adlib.js b/lib/ldap/adlib.js
+index ce26c566..198510b5 100644
+--- a/lib/ldap/adlib.js
++++ b/lib/ldap/adlib.js
+@@ -52,8 +52,8 @@ function _search (client, searchBase, options, callback) {
+     pagePause: false
+   };
+   /// 针对openldap增加的查询字段
+-  if (opts.filter.indexOf('top') > 0 && opts.attributes == null) {
+-    opts.attributes = ['displayName', 'mail', 'entryUUID', 'dn', 'gidNumber', 'ou', 'dc', 'entryDN', 'mobile', 'title', 'cn', 'uid', 'sn', 'userPassword', 'loginShell', 'objectClass', 'uidNumber'];
++  if (opts.filter.indexOf('PKIUserObject') > 0 && opts.attributes == null) {
++    opts.attributes = ['mobileNumber', 'organName', 'organCode', 'dn', 'GAEmail', 'manName', 'idCard', 'dutyName'];
+   }
+   client.search(searchBase, opts, (err, result) => {
+     if (err) return close(client, () => { return callback(err, null); });
+@@ -61,8 +61,8 @@ function _search (client, searchBase, options, callback) {
+     let items = [];
+     result.on('searchEntry', (entry) => {
+       let obj = entry.object;
+-      if (entry.raw.objectSid) obj.objectSid = binarySIDToString(entry.raw.objectSid);
+-      if (entry.raw.objectGUID) obj.objectGUID = binaryGUIDToString(entry.raw.objectGUID);
++      // if (entry.raw.objectSid) obj.objectSid = binarySIDToString(entry.raw.objectSid);
++      // if (entry.raw.objectGUID) obj.objectGUID = binaryGUIDToString(entry.raw.objectGUID);
+       /// TODO:此处添加OpenLdape ntryUUID的处理
+       // if (obj.entryUUID) obj.objectGUID = binaryGUIDToString(obj.entryUUID);(调用该方法生成的entryUUID长度超限)
+       if (obj.entryUUID) obj.objectGUID = obj.entryUUID;
+diff --git a/lib/repository/base.repository.js b/lib/repository/base.repository.js
+index 6b04844e..61dab8c6 100644
+--- a/lib/repository/base.repository.js
++++ b/lib/repository/base.repository.js
+@@ -3,7 +3,7 @@ const async = require('async');
+ const Q = require('q');
+ const config = require('../../config/config.js').mysql;
+ const pool = generationPool(config);
+-const logger = require('../logger/index')
++const logger = require('../logger/index');
+ exports.pool = pool;
+ 
+ pool.on('connection', function (connection) {
+@@ -17,7 +17,7 @@ pool.on('connection', function (connection) {
+   MySqlDao.query = function (sql, values) {
+     const d = Q.defer();
+     pool.getConnection(function (error, connection) {
+-
++      connection.release();
+       if (error) {
+         if (connection) {
+           connection.destroy();
+@@ -31,7 +31,7 @@ pool.on('connection', function (connection) {
+       // 监听error
+       let isError = false;
+       connection.on('error', function (err) {
+-        logger.error(err)
++        logger.error(err);
+         isError = true;
+         connection.destroy();
+         return d.reject(error);
+@@ -40,10 +40,10 @@ pool.on('connection', function (connection) {
+       if (isError) {
+         return;
+       }
+-      const sqls = {sql, values, timeout: 40000}
++      const sqls = {sql, values, timeout: 40000};
+       connection.query(sqls, function (error, rows) {
+         if (error) {
+-          connection.destroy()
++          connection.destroy();
+           return d.reject(error);
+         }
+ 
+@@ -62,6 +62,7 @@ pool.on('connection', function (connection) {
+   MySqlDao.transaction = function (sqls) {
+     const d = Q.defer();
+     pool.getConnection(function (error, connection) {
++      connection.release();
+       if (error) {
+         console.log(error);
+         if (connection) {
+@@ -73,10 +74,10 @@ pool.on('connection', function (connection) {
+       if (!connection) {
+         return d.reject(new Error('connection is null'));
+       }
+-      //监听error
++      // 监听error
+       let isError = false;
+       connection.on('error', function (err) {
+-        logger.error(err)
++        logger.error(err);
+         isError = true;
+         connection.destroy();
+         return d.reject(error);
+@@ -100,7 +101,7 @@ pool.on('connection', function (connection) {
+           // 提交
+           connection.commit(function (error) {
+             if (error) {
+-              connection.destroy()
++              connection.destroy();
+               return d.reject(error);
+             }
+             connection.release();
+@@ -117,7 +118,7 @@ pool.on('connection', function (connection) {
+  * @param  config  <Object>  数据库的配置
+  * @return mysql连接池
+  */
+-function generationPool(config) {
++function generationPool (config) {
+   let dbHost = config.dbHost;
+   let pool = dbHost.length === 1 ? poolFun(config) : poolClusterFun(config);
+   return pool;
+@@ -127,7 +128,7 @@ function generationPool(config) {
+  * @param  config  <Object>  数据库的配置
+  * @return mysql连接池
+  */
+-function poolFun(config) {
++function poolFun (config) {
+   let cfg = {
+     host: config.dbHost[0],
+     port: config.dbPort,
+@@ -144,7 +145,7 @@ function poolFun(config) {
+  * @param  config  <Object>  数据库的配置
+  * @return mysql连接池集群
+  */
+-function poolClusterFun(config) {
++function poolClusterFun (config) {
+   var poolCluster = mysql.createPoolCluster();
+   for (let index = 0; index < config.dbHost.length; index++) {
+     let cfg = {
+@@ -166,7 +167,7 @@ function poolClusterFun(config) {
+  * @param   tasks       {Array}    sql语句数组
+  * @return  array       {Array}    async.series的 流程函数 组成的数组
+  */
+-function generationTaskFunArray(connection, tasks) {
++function generationTaskFunArray (connection, tasks) {
+   let array = [];
+   for (let i = 0; i < tasks.length; i++) {
+     let o = tasks[i];
+diff --git a/lib/service/vpnCheckToken.service.js b/lib/service/vpnCheckToken.service.js
+new file mode 100644
+index 00000000..0a2673b1
+--- /dev/null
++++ b/lib/service/vpnCheckToken.service.js
+@@ -0,0 +1,38 @@
++'use strict';
++const request = require('request');
++const config = require('../../config/config');
++const Q = require('q');
++const querystring = require('querystring');
++const logger = require('../logger/index');
++module.exports = {
++  checkToken: function (userName, loginToken) {
++    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
++    let d = Q.defer();
++    let vpnIp = config.authServerIp;
++    let urlPath = `https://${vpnIp}/por/check_login_token.csp`;
++    const optionsData = querystring.stringify({
++      'token': loginToken,
++      'username': userName
++    });
++    const options = {
++      url: urlPath,
++      method: 'POST',
++      body: optionsData
++    };
++    request(options, function (err, resp, body) {
++      let data = JSON.parse(body);
++      if (err) {
++        console.log(err);
++        logger.info('request error: ', err);
++        d.reject(err);
++      } else {
++        if (data.errorCode === '0') {
++          d.resolve(true);
++        } else {
++          d.reject(data);
++        }
++      }
++    });
++    return d.promise;
++  }
++};
+-- 
+2.17.0.windows.1
+
